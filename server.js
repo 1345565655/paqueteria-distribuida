@@ -32,7 +32,27 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+// Iniciar servidor
+const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
   console.log(`📍 URL: http://localhost:${PORT}`);
+  
+  // Inicializar pools de base de datos
+  console.log('🔄 Inicializando conexiones a bases de datos...');
+  try {
+    const response = await fetch(`http://localhost:${PORT}/api/init`);
+    const result = await response.json();
+    console.log('✅ Inicialización completada:', result);
+  } catch (err) {
+    console.log('⚠️ Error en inicialización:', err.message);
+  }
+});
+
+// Manejo de cierre graceful
+process.on('SIGTERM', () => {
+  console.log('SIGTERM recibido, cerrando servidor...');
+  server.close(() => {
+    console.log('Servidor cerrado');
+    process.exit(0);
+  });
 });
