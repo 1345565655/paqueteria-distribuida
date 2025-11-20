@@ -24,8 +24,8 @@
                 clientes: [],
                 almacenes: [],
                 viajes: [],
-                stats: {},
-                reportes: {}
+                stats: {}
+       
             });
             const [status, setStatus] = useState({ mexico: 'CARGANDO', canada: 'CARGANDO', cambiosPendientes: 0 });
             const [region, setRegion] = useState('DESCONOCIDA');
@@ -81,18 +81,7 @@
                 }
             };
             
-            const loadReporte = async (tipo) => {
-                try {
-                    const res = await fetch(`${API_URL}/reportes/${tipo}`);
-                    const result = await res.json();
-                    setData(prev => ({
-                        ...prev,
-                        reportes: { ...prev.reportes, [tipo]: result.data }
-                    }));
-                } catch (err) {
-                    console.error('Error cargando reporte:', err);
-                }
-            };
+
             
             const rastrearEnvio = async (e) => {
                 e.preventDefault();
@@ -284,7 +273,7 @@
                     <nav className="bg-white shadow">
                         <div className="container mx-auto px-6">
                             <div className="flex space-x-8">
-                                {['dashboard', 'envios', 'clientes', 'almacenes', 'viajes', 'reportes'].map(tab => (
+                                {['dashboard', 'envios', 'clientes', 'almacenes', 'viajes', ].map(tab => (
                                     <button
                                         key={tab}
                                         onClick={() => setView(tab)}
@@ -376,52 +365,7 @@
                             </div>
                         )}
                         
-                        {view === 'reportes' && (
-                            <div className="space-y-6">
-                                <h2 className="text-2xl font-bold">Reportes</h2>
-                                <div className="grid grid-cols-3 gap-4">
-                                    <button onClick={() => loadReporte('clientes')} className="bg-blue-600 text-white p-4 rounded">
-                                        📊 Reporte Clientes
-                                    </button>
-                                    <button onClick={() => loadReporte('almacenes')} className="bg-green-600 text-white p-4 rounded">
-                                        📦 Reporte Almacenes
-                                    </button>
-                                    <button onClick={() => loadReporte('viajes')} className="bg-purple-600 text-white p-4 rounded">
-                                        🚚 Reporte Viajes
-                                    </button>
-                                </div>
-                                
-                                {data.reportes.clientes && (
-                                    <div className="bg-white rounded-lg shadow p-6">
-                                        <h3 className="font-bold mb-4">Reporte de Clientes</h3>
-                                        <table className="w-full text-sm">
-                                            <thead>
-                                                <tr className="border-b">
-                                                    <th className="text-left p-2">Nombre</th>
-                                                    <th className="text-left p-2">CURP</th>
-                                                    <th className="text-left p-2">Edad</th>
-                                                    <th className="text-left p-2">Envíos</th>
-                                                    <th className="text-left p-2">Total Pagado</th>
-                                                    <th className="text-left p-2">Deuda</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {data.reportes.clientes.map((c, i) => (
-                                                    <tr key={i} className="border-b">
-                                                        <td className="p-2">{c.NOMBRE_COMPLETO}</td>
-                                                        <td className="p-2">{c.CURP}</td>
-                                                        <td className="p-2">{c.EDAD}</td>
-                                                        <td className="p-2">{c.NUM_ENVIOS}</td>
-                                                        <td className="p-2">${c.TOTAL_PAGADO}</td>
-                                                        <td className="p-2">${c.DEUDA}</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                    
                         
                         {view === 'clientes' && (
                             <div className="space-y-6">
