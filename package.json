@@ -2,12 +2,13 @@
   "name": "paqueteria-distribuida",
   "version": "1.0.0",
   "description": "Sistema de Paquetería con BD Distribuidas",
-  "main": "api/index.js",
+  "main": "server.js",
   "scripts": {
-    "dev": "vercel dev",
-    "deploy": "vercel --prod"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
+    "express": "^4.18.2",
     "oracledb": "^6.3.0"
   },
   "engines": {
