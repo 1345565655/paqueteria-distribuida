@@ -1,6 +1,7 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const expressLayouts = require("express-ejs-layouts");
+
 const {
   dbMexico,
   dbCanada,
@@ -35,6 +36,7 @@ async function tryConn(conf) {
 // ======================
 app.get("/", (req, res) => res.render("index"));
 app.get("/clientes", (req, res) => res.render("clientes"));
+
 // ======================
 // FORMULARIO DE ENVÍO
 // ======================
@@ -46,31 +48,29 @@ app.get("/envios", async (req, res) => {
   if (!conn)
     return res.send("❌ No hay conexión con ninguna BD");
 
-  // Traemos clientes
   const clientesR = await conn.execute(`
     SELECT id, nombre, apellidos
     FROM clientes
     ORDER BY nombre
   `);
-  const clientes = rowsToObjects(clientesR);
 
-  // Traemos almacenes
   const almacenesR = await conn.execute(`
     SELECT id, nombre
     FROM almacenes
     ORDER BY nombre
   `);
+
+  const clientes = rowsToObjects(clientesR);
   const almacenes = rowsToObjects(almacenesR);
 
   await conn.close();
-
   res.render("envios", { clientes, almacenes });
 });
+
 app.get("/tracking", (req, res) => res.render("tracking"));
 app.get("/replicar", (req, res) => res.render("replicar"));
-app.get("/reportes", (req, res) => {
-  res.render("reportes_menu");
-});
+
+app.get("/reportes", (req, res) => res.render("reportes_menu"));
 
 // ======================
 // GUARDAR CLIENTE
@@ -97,10 +97,10 @@ app.post("/clientes/nuevo", async (req, res) => {
       { n: Nombre, a: Apellidos, e: Email, t: Telefono },
       { autoCommit: true }
     );
+
     await conn.close();
 
     res.send(`<script>alert("Cliente guardado en ${destino}"); window.location="/";</script>`);
-
   } catch (err) {
     res.send(err.message);
   }
@@ -132,18 +132,15 @@ app.post("/envios/nuevo", async (req, res) => {
       destino = "Canadá";
     }
 
-    await conn.execute(sql, {
-      c: cliente_id,
-      o: almacen_origen,
-      d: almacen_destino,
-      p: peso,
-      cost: costo
-    }, { autoCommit: true });
+    await conn.execute(
+      sql,
+      { c: cliente_id, o: almacen_origen, d: almacen_destino, p: peso, cost: costo },
+      { autoCommit: true }
+    );
 
     await conn.close();
 
     res.send(`<script>alert("Envío guardado en ${destino}"); window.location="/";</script>`);
-
   } catch (err) {
     res.send(err.message);
   }
@@ -153,9 +150,7 @@ app.post("/envios/nuevo", async (req, res) => {
 // REPORTE DE CLIENTES
 // ==============================
 app.get("/reportes/clientes", async (req, res) => {
-  const conn =
-    (await tryConn(dbMexico)) ||
-    (await tryConn(dbCanada));
+  const conn = await tryConn(dbMexico) || await tryConn(dbCanada);
 
   if (!conn)
     return res.send("❌ No hay conexión con ninguna BD");
@@ -175,9 +170,7 @@ app.get("/reportes/clientes", async (req, res) => {
 // REPORTE DE ENVÍOS
 // ==============================
 app.get("/reportes/envios", async (req, res) => {
-  const conn =
-    (await tryConn(dbMexico)) ||
-    (await tryConn(dbCanada));
+  const conn = await tryConn(dbMexico) || await tryConn(dbCanada);
 
   if (!conn)
     return res.send("❌ No hay conexión con ninguna BD");
@@ -197,12 +190,10 @@ app.get("/reportes/envios", async (req, res) => {
 });
 
 // ==============================
-// REPORTE DE RUTAS (TRACKING)
+// REPORTE DE RUTAS
 // ==============================
 app.get("/reportes/rutas", async (req, res) => {
-  const conn =
-    (await tryConn(dbMexico)) ||
-    (await tryConn(dbCanada));
+  const conn = await tryConn(dbMexico) || await tryConn(dbCanada);
 
   if (!conn)
     return res.send("❌ No hay conexión con ninguna BD");
@@ -225,15 +216,15 @@ app.get("/reportes/rutas", async (req, res) => {
 app.get("/tracking/resultado", async (req, res) => {
   const guia = req.query.guia;
 
-  const sql = `
-    SELECT numero_guia, estatus, fecha_envio, fecha_entrega_real
-    FROM envios
-    WHERE numero_guia = :g
-  `;
-
   try {
     let conn = await tryConn(dbMexico) || await tryConn(dbCanada);
-    const r = await conn.execute(sql, { g: guia });
+
+    const r = await conn.execute(
+      `SELECT numero_guia, estatus, fecha_envio, fecha_entrega_real
+       FROM envios WHERE numero_guia = :g`,
+      { g: guia }
+    );
+
     const data = rowsToObjects(r);
     conn.close();
 
@@ -247,203 +238,154 @@ app.get("/tracking/resultado", async (req, res) => {
   }
 });
 
-
-
 // ===================================================================
-// ======================== FUNCIONES DE REPLICA =====================
+// ================== REPLICACIÓN (FUNCIONANDO CON DB LINKS) =========
 // ===================================================================
+// ==============================
+// REPlicación usando DB LINKS
+// ==============================
 
-// CLIENTES MX → CA
-async function replicarClientes_MX_CA(mx, ca) {
-  const all = await mx.execute(
-    `SELECT nombre, apellidos, email, telefono FROM clientes`
-  );
-  let n = 0;
+// NOMBRES DE DB LINKS
+const LINK_CANADA = "LINK_CANADA";
+const LINK_MEXICO = "LINK_MEXICO";
 
-  for (const c of all.rows) {
-    const existe = await ca.execute(
-      `SELECT 1 FROM clientes WHERE email = :e`,
-      { e: c[2] }
-    );
+// 1) CLIENTES MX -> CA (se ejecuta en México)
+const SQL_CLIENTES_MX_TO_CA = `
+INSERT INTO clientes@${LINK_CANADA} (
+  nombre, apellidos, email, telefono, fecha_nacimiento,
+  direccion, ciudad, estado, pais, region
+)
+SELECT nombre, apellidos, email, telefono, fecha_nacimiento,
+       direccion, ciudad, estado, pais, region
+FROM clientes c
+WHERE NOT EXISTS (
+  SELECT 1 FROM clientes@${LINK_CANADA} cc
+  WHERE cc.email = c.email
+)
+`;
 
-    if (existe.rows.length === 0) {
-      await ca.execute(
-        `INSERT INTO clientes(nombre, apellidos, email, telefono)
-         VALUES(:n, :a, :e, :t)`,
-        {
-          n: c[0],
-          a: c[1],
-          e: c[2],
-          t: c[3]
-        },
-        { autoCommit: true }
-      );
-      n++;
-    }
-  }
+// 2) CLIENTES CA -> MX (se ejecuta en Canadá)
+const SQL_CLIENTES_CA_TO_MX = `
+INSERT INTO clientes@${LINK_MEXICO} (
+  nombre, apellidos, email, telefono, fecha_nacimiento,
+  direccion, ciudad, estado, pais, region
+)
+SELECT nombre, apellidos, email, telefono, fecha_nacimiento,
+       direccion, ciudad, estado, pais, region
+FROM clientes c
+WHERE NOT EXISTS (
+  SELECT 1 FROM clientes@${LINK_MEXICO} cm
+  WHERE cm.email = c.email
+)
+`;
 
-  console.log(`🟢 CLIENTES MX → CA replicados: ${n}`);
-  return n;
-}
+// 3) ENVÍOS MX -> CA (se ejecuta en México)
+const SQL_ENVIOS_MX_TO_CA = `
+INSERT INTO envios@${LINK_CANADA} (
+  numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
+  viaje_id, descripcion, peso_kg, dimensiones, valor_declarado,
+  estatus, fecha_creacion, fecha_envio, fecha_entrega_estimada,
+  fecha_entrega_real, costo_envio, costo_adicional,
+  destinatario_nombre, destinatario_telefono, destinatario_direccion,
+  region_origen, region_destino
+)
+SELECT
+  numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
+  viaje_id, descripcion, peso_kg, dimensiones, valor_declarado,
+  estatus, fecha_creacion, fecha_envio, fecha_entrega_estimada,
+  fecha_entrega_real, costo_envio, costo_adicional,
+  destinatario_nombre, destinatario_telefono, destinatario_direccion,
+  region_origen, region_destino
+FROM envios e
+WHERE NOT EXISTS (
+  SELECT 1 FROM envios@${LINK_CANADA} ec
+  WHERE ec.numero_guia = e.numero_guia
+)
+`;
 
-// CLIENTES CA → MX
-async function replicarClientes_CA_MX(mx, ca) {
-  const all = await ca.execute(
-    `SELECT nombre, apellidos, email, telefono FROM clientes`
-  );
-  let n = 0;
+// 4) ENVÍOS CA -> MX (se ejecuta en Canadá)
+const SQL_ENVIOS_CA_TO_MX = `
+INSERT INTO envios@${LINK_MEXICO} (
+  numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
+  viaje_id, descripcion, peso_kg, dimensiones, valor_declarado,
+  estatus, fecha_creacion, fecha_envio, fecha_entrega_estimada,
+  fecha_entrega_real, costo_envio, costo_adicional,
+  destinatario_nombre, destinatario_telefono, destinatario_direccion,
+  region_origen, region_destino
+)
+SELECT
+  numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
+  viaje_id, descripcion, peso_kg, dimensiones, valor_declarado,
+  estatus, fecha_creacion, fecha_envio, fecha_entrega_estimada,
+  fecha_entrega_real, costo_envio, costo_adicional,
+  destinatario_nombre, destinatario_telefono, destinatario_direccion,
+  region_origen, region_destino
+FROM envios e
+WHERE NOT EXISTS (
+  SELECT 1 FROM envios@${LINK_MEXICO} em
+  WHERE em.numero_guia = e.numero_guia
+)
+`;
 
-  for (const c of all.rows) {
-    const existe = await mx.execute(
-      `SELECT 1 FROM clientes WHERE email = :e`,
-      { e: c[2] }
-    );
-
-    if (existe.rows.length === 0) {
-      await mx.execute(
-        `INSERT INTO clientes(nombre, apellidos, email, telefono)
-         VALUES(:n, :a, :e, :t)`,
-        {
-          n: c[0],
-          a: c[1],
-          e: c[2],
-          t: c[3]
-        },
-        { autoCommit: true }
-      );
-      n++;
-    }
-  }
-
-  console.log(`🟢 CLIENTES CA → MX replicados: ${n}`);
-  return n;
-}
-
-
-// ENVÍOS MX → CA
-async function replicarEnvios_MX_CA(mx, ca) {
-  const all = await mx.execute(`SELECT numero_guia FROM envios`);
-  let n = 0;
-
-  for (const r of all.rows) {
-    const guia = r[0];
-
-    const existe = await ca.execute(
-      `SELECT 1 FROM envios WHERE numero_guia = :g`,
-      { g: guia }
-    );
-
-    if (existe.rows.length === 0) {
-      const d = await mx.execute(
-        `SELECT numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
-                peso_kg, costo_envio, fecha_creacion, estatus
-         FROM envios WHERE numero_guia = :g`,
-        { g: guia }
-      );
-
-      const obj = rowsToObjects(d)[0];
-
-      await ca.execute(
-        `INSERT INTO envios(
-          numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
-          peso_kg, costo_envio, fecha_creacion, estatus
-        ) VALUES(
-          :numero_guia, :cliente_id, :almacen_origen_id, :almacen_destino_id,
-          :peso_kg, :costo_envio, :fecha_creacion, :estatus
-        )`,
-        obj,
-        { autoCommit: true }
-      );
-      n++;
-    }
-  }
-
-  console.log(`📦 ENVÍOS MX → CA replicados: ${n}`);
-  return n;
-}
-
-
-// ENVÍOS CA → MX
-async function replicarEnvios_CA_MX(mx, ca) {
-  const all = await ca.execute(`SELECT numero_guia FROM envios`);
-  let n = 0;
-
-  for (const r of all.rows) {
-    const guia = r[0];
-
-    const existe = await mx.execute(
-      `SELECT 1 FROM envios WHERE numero_guia = :g`,
-      { g: guia }
-    );
-
-    if (existe.rows.length === 0) {
-      const d = await ca.execute(
-        `SELECT numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
-                peso_kg, costo_envio, fecha_creacion, estatus
-         FROM envios WHERE numero_guia = :g`,
-        { g: guia }
-      );
-
-      const obj = rowsToObjects(d)[0];
-
-      await mx.execute(
-        `INSERT INTO envios(
-          numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
-          peso_kg, costo_envio, fecha_creacion, estatus
-        ) VALUES(
-          :numero_guia, :cliente_id, :almacen_origen_id, :almacen_destino_id,
-          :peso_kg, :costo_envio, :fecha_creacion, :estatus
-        )`,
-        obj,
-        { autoCommit: true }
-      );
-      n++;
-    }
-  }
-
-  console.log(`📦 ENVÍOS CA → MX replicados: ${n}`);
-  return n;
-}
-
-
-// ===================================================================
-// FUNCIÓN ÚNICA QUE EJECUTA LAS 4 REPLICACIONES
-// ===================================================================
+// ==========================================
+// FUNCIÓN PRINCIPAL DE REPLICACIÓN COMPLETA
+// ==========================================
 async function replicarTodo() {
-  console.log("⏳ Ejecutando replicación en ambas bases…");
+  console.log("⏳ Ejecutando replicación via DB LINKS...");
 
+  // Conexiones MX y CA
   const mx = await tryConn(dbMexico);
   const ca = await tryConn(dbCanada);
 
   if (!mx || !ca) {
-    console.log("❌ No hay conexión con alguna BD");
+    console.log("❌ No hay conexión con alguna BD (MX o CA).");
+    if (mx) await mx.close().catch(() => {});
+    if (ca) await ca.close().catch(() => {});
     return;
   }
 
-  await replicarClientes_MX_CA(mx, ca);
-  await replicarClientes_CA_MX(mx, ca);
-  await replicarEnvios_MX_CA(mx, ca);
-  await replicarEnvios_CA_MX(mx, ca);
+  try {
+    // MX → CA
+    console.log("-> CLIENTES MX -> CA...");
+    await mx.execute(SQL_CLIENTES_MX_TO_CA, [], { autoCommit: true });
 
-  await mx.close();
-  await ca.close();
+    console.log("-> ENVIOS MX -> CA...");
+    await mx.execute(SQL_ENVIOS_MX_TO_CA, [], { autoCommit: true });
 
-  console.log("✔ Replicación terminada");
+    // CA → MX
+    console.log("-> CLIENTES CA -> MX...");
+    await ca.execute(SQL_CLIENTES_CA_TO_MX, [], { autoCommit: true });
+
+    console.log("-> ENVIOS CA -> MX...");
+    await ca.execute(SQL_ENVIOS_CA_TO_MX, [], { autoCommit: true });
+
+    console.log("✔ Replicación via DB LINKS finalizada");
+  } catch (err) {
+    console.error("❌ Error durante replicación via DB LINKS:", err.message);
+  } finally {
+    try { await mx.close(); } catch (e) {}
+    try { await ca.close(); } catch (e) {}
+  }
 }
 
-
-// ===================================================================
-// REPLICACIÓN MANUAL
-// ===================================================================
+// =======================
+// RUTA PARA EJECUTAR MANUAL
+// =======================
 app.get("/replicar/run", async (req, res) => {
   await replicarTodo();
-  res.send(`<script>alert("Replicación completada con éxito"); window.location="/";</script>`);
+  res.send(`
+    <script>
+      alert("Replicación ejecutada (DB LINKS). Revisa logs en consola.");
+      window.location="/";
+    </script>
+  `);
 });
 
-// ===================================================================
-// REPLICACIÓN AUTOMÁTICA CADA 2 MINUTOS
-// ===================================================================
+// ==========================
+// CRON AUTOMÁTICO (cada 2 min)
+// ==========================
 setInterval(replicarTodo, 1000 * 60 * 2);
+
 
 // ===================================================================
 // INICIAR SERVIDOR
