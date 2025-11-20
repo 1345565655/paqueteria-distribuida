@@ -15,7 +15,6 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
         
-        // API Base URL
         const API_URL = window.location.origin + '/api';
         
         function App() {
@@ -24,55 +23,65 @@
             const [clientes, setClientes] = useState([]);
             const [almacenes, setAlmacenes] = useState([]);
             const [viajes, setViajes] = useState([]);
-            const [stats, setStats] = useState({});
+            const [stats, setStats] = useState({
+                ENVIOS_ACTIVOS: 0,
+                TOTAL_CLIENTES: 0,
+                TOTAL_ALMACENES: 0,
+                VIAJES_ACTIVOS: 0
+            });
             const [status, setStatus] = useState({ mexico: 'CARGANDO', canada: 'CARGANDO' });
             const [region, setRegion] = useState('DESCONOCIDA');
             const [loading, setLoading] = useState(false);
+            const [error, setError] = useState(null);
             
-            // Cargar estado del sistema
             const loadStatus = async () => {
                 try {
                     const res = await fetch(`${API_URL}/status`);
                     const data = await res.json();
                     setStatus(data);
                 } catch (err) {
-                    console.error('Error cargando status:', err);
+                    console.error('Error status:', err);
                 }
             };
             
-            // Cargar datos
             const loadData = async () => {
                 setLoading(true);
+                setError(null);
+                
                 try {
-                    // Dashboard stats
                     const statsRes = await fetch(`${API_URL}/dashboard`);
                     const statsData = await statsRes.json();
-                    setStats(statsData.data);
-                    setRegion(statsData.region);
                     
-                    // Envíos
-                    const enviosRes = await fetch(`${API_URL}/envios`);
+                    if (statsData.error) throw new Error(statsData.error);
+                    
+                    setStats(statsData.data || {
+                        ENVIOS_ACTIVOS: 0,
+                        TOTAL_CLIENTES: 0,
+                        TOTAL_ALMACENES: 0,
+                        VIAJES_ACTIVOS: 0
+                    });
+                    setRegion(statsData.region || 'DESCONOCIDA');
+                    
+                    const [enviosRes, clientesRes, almacenesRes, viajesRes] = await Promise.all([
+                        fetch(`${API_URL}/envios`),
+                        fetch(`${API_URL}/clientes`),
+                        fetch(`${API_URL}/almacenes`),
+                        fetch(`${API_URL}/viajes`)
+                    ]);
+                    
                     const enviosData = await enviosRes.json();
-                    setEnvios(enviosData.data || []);
-                    
-                    // Clientes
-                    const clientesRes = await fetch(`${API_URL}/clientes`);
                     const clientesData = await clientesRes.json();
-                    setClientes(clientesData.data || []);
-                    
-                    // Almacenes
-                    const almacenesRes = await fetch(`${API_URL}/almacenes`);
                     const almacenesData = await almacenesRes.json();
-                    setAlmacenes(almacenesData.data || []);
-                    
-                    // Viajes
-                    const viajesRes = await fetch(`${API_URL}/viajes`);
                     const viajesData = await viajesRes.json();
+                    
+                    setEnvios(enviosData.data || []);
+                    setClientes(clientesData.data || []);
+                    setAlmacenes(almacenesData.data || []);
                     setViajes(viajesData.data || []);
                     
                 } catch (err) {
                     console.error('Error cargando datos:', err);
-                    alert('Error: ' + err.message);
+                    setError(err.message);
                 } finally {
                     setLoading(false);
                 }
@@ -81,11 +90,10 @@
             useEffect(() => {
                 loadStatus();
                 loadData();
-                const interval = setInterval(loadStatus, 5000); // Check cada 5s
+                const interval = setInterval(loadStatus, 5000);
                 return () => clearInterval(interval);
             }, []);
             
-            // Crear nuevo envío
             const crearEnvio = async (e) => {
                 e.preventDefault();
                 const formData = new FormData(e.target);
@@ -108,9 +116,12 @@
                     
                     const data = await res.json();
                     if (data.success) {
-                        alert('✅ Envío creado y replicado!');
+                        alert('✅ Envío creado: ' + data.numeroGuia);
                         loadData();
                         e.target.reset();
+                        document.getElementById('formEnvio').classList.add('hidden');
+                    } else {
+                        alert('Error: ' + (data.error || 'No se pudo crear el envío'));
                     }
                 } catch (err) {
                     alert('Error: ' + err.message);
@@ -119,7 +130,6 @@
             
             return (
                 <div className="min-h-screen bg-gray-100">
-                    {/* Header */}
                     <header className="bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg">
                         <div className="container mx-auto px-6 py-4">
                             <div className="flex items-center justify-between">
@@ -149,7 +159,6 @@
                         </div>
                     </header>
                     
-                    {/* Navigation */}
                     <nav className="bg-white shadow">
                         <div className="container mx-auto px-6">
                             <div className="flex space-x-8">
@@ -170,11 +179,15 @@
                         </div>
                     </nav>
                     
-                    {/* Main Content */}
                     <main className="container mx-auto px-6 py-8">
+                        {error && (
+                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                                Error: {error}
+                            </div>
+                        )}
+                        
                         {loading && <div className="text-center py-8">Cargando...</div>}
                         
-                        {/* Dashboard */}
                         {view === 'dashboard' && (
                             <div className="space-y-6">
                                 <h2 className="text-2xl font-bold">Dashboard</h2>
@@ -199,7 +212,6 @@
                             </div>
                         )}
                         
-                        {/* Envíos */}
                         {view === 'envios' && (
                             <div className="space-y-6">
                                 <div className="flex justify-between items-center">
@@ -212,7 +224,6 @@
                                     </button>
                                 </div>
                                 
-                                {/* Formulario Nuevo Envío */}
                                 <form id="formEnvio" onSubmit={crearEnvio} className="hidden bg-white rounded-lg shadow p-6 space-y-4">
                                     <h3 className="font-bold text-lg">Crear Nuevo Envío</h3>
                                     <div className="grid grid-cols-2 gap-4">
@@ -222,7 +233,7 @@
                                         <input name="peso_kg" type="number" step="0.01" placeholder="Peso (kg)" required className="border p-2 rounded"/>
                                         <input name="costo_envio" type="number" step="0.01" placeholder="Costo" required className="border p-2 rounded"/>
                                         <input name="destinatario_nombre" placeholder="Destinatario" required className="border p-2 rounded"/>
-                                        <input name="destinatario_telefono" placeholder="Teléfono" required className="border p-2 rounded"/>
+                                        <input name="destinatario_telefono" placeholder="Teléfono" className="border p-2 rounded"/>
                                         <input name="descripcion" placeholder="Descripción" className="border p-2 rounded col-span-2"/>
                                     </div>
                                     <button type="submit" className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700">
@@ -230,7 +241,6 @@
                                     </button>
                                 </form>
                                 
-                                {/* Tabla Envíos */}
                                 <div className="bg-white rounded-lg shadow overflow-x-auto">
                                     <table className="w-full">
                                         <thead className="bg-gray-50">
@@ -268,7 +278,6 @@
                             </div>
                         )}
                         
-                        {/* Clientes */}
                         {view === 'clientes' && (
                             <div className="space-y-6">
                                 <h2 className="text-2xl font-bold">Clientes</h2>
@@ -294,7 +303,6 @@
                             </div>
                         )}
                         
-                        {/* Almacenes */}
                         {view === 'almacenes' && (
                             <div className="space-y-6">
                                 <h2 className="text-2xl font-bold">Almacenes</h2>
@@ -306,16 +314,16 @@
                                             <p className="text-xs text-blue-600 font-medium mt-1">Región: {a.REGION}</p>
                                             <div className="grid grid-cols-3 gap-4 mt-4">
                                                 <div className="text-center p-3 bg-yellow-50 rounded">
-                                                    <p className="text-2xl font-bold text-yellow-600">{a.PAQUETES_ESPERA}</p>
-                                                    <p className="text-xs text-gray-600">En Espera</p>
+                                                    <p className="text-2xl font-bold text-yellow-600">{a.PENDIENTES || 0}</p>
+                                                    <p className="text-xs text-gray-600">Pendientes</p>
                                                 </div>
                                                 <div className="text-center p-3 bg-blue-50 rounded">
-                                                    <p className="text-2xl font-bold text-blue-600">{a.EN_TRANSITO}</p>
+                                                    <p className="text-2xl font-bold text-blue-600">{a.TRANSITO || 0}</p>
                                                     <p className="text-xs text-gray-600">En Tránsito</p>
                                                 </div>
                                                 <div className="text-center p-3 bg-green-50 rounded">
-                                                    <p className="text-2xl font-bold text-green-600">{a.ENVIADOS}</p>
-                                                    <p className="text-xs text-gray-600">Enviados</p>
+                                                    <p className="text-2xl font-bold text-green-600">{a.ENTREGADOS || 0}</p>
+                                                    <p className="text-xs text-gray-600">Entregados</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -324,7 +332,6 @@
                             </div>
                         )}
                         
-                        {/* Viajes */}
                         {view === 'viajes' && (
                             <div className="space-y-6">
                                 <h2 className="text-2xl font-bold">Viajes</h2>
@@ -344,7 +351,7 @@
                                                     }`}>
                                                         {v.ESTATUS}
                                                     </span>
-                                                    <p className="text-sm text-gray-600 mt-2">{v.TOTAL_PAQUETES} paquetes</p>
+                                                    <p className="text-sm text-gray-600 mt-2">{v.PAQUETES || 0} paquetes</p>
                                                 </div>
                                             </div>
                                         </div>

@@ -1,24 +1,25 @@
 const oracledb = require("oracledb");
 
 // =============================
-// CONFIG DB
+// CONFIG DB - SIN WALLETS (mTLS deshabilitado)
 // =============================
 const dbConfigMexico = {
   user: process.env.DB_MEXICO_USER || "ADMIN",
   password: process.env.DB_MEXICO_PASSWORD || "Adi4APH_827HK",
-  connectString:
-    `${process.env.DB_MEXICO_HOST || "adb.mx-queretaro-1.oraclecloud.com"}:` +
-    `${process.env.DB_MEXICO_PORT || "1522"}/` +
-    `${process.env.DB_MEXICO_SERVICE || "g1eba54685c8450_dbmexico_high.adb.oraclecloud.com"}`
+  // Usar el string completo sin validación estricta de certificados
+  connectString: "(description=(retry_count=20)(retry_delay=3)" +
+    "(address=(protocol=tcps)(port=1522)(host=adb.mx-queretaro-1.oraclecloud.com))" +
+    "(connect_data=(service_name=g1eba54685c8450_dbmexico_tp.adb.oraclecloud.com))" +
+    "(security=(ssl_server_dn_match=no)))" // Cambiar a 'no' para desarrollo
 };
 
 const dbConfigCanada = {
   user: process.env.DB_CANADA_USER || "ADMIN",
   password: process.env.DB_CANADA_PASSWORD || "Adi4APH_827HK",
-  connectString:
-    `${process.env.DB_CANADA_HOST || "adb.mx-queretaro-1.oraclecloud.com"}:` +
-    `${process.env.DB_CANADA_PORT || "1522"}/` +
-    `${process.env.DB_CANADA_SERVICE || "g1eba54685c8450_dbcanada_high.adb.oraclecloud.com"}`
+  connectString: "(description=(retry_count=20)(retry_delay=3)" +
+    "(address=(protocol=tcps)(port=1522)(host=adb.mx-queretaro-1.oraclecloud.com))" +
+    "(connect_data=(service_name=g1eba54685c8450_dbcanada_tp.adb.oraclecloud.com))" +
+    "(security=(ssl_server_dn_match=no)))"
 };
 
 let poolMexico = null;
@@ -30,13 +31,15 @@ let poolCanada = null;
 async function initPools() {
   try {
     if (!poolMexico) {
+      console.log("🔄 Intentando conectar a México...");
       poolMexico = await oracledb.createPool({
         ...dbConfigMexico,
         poolMin: 1,
-        poolMax: 10,
-        poolIncrement: 1
+        poolMax: 5,
+        poolIncrement: 1,
+        poolTimeout: 60
       });
-      console.log("🇲🇽 Pool México iniciado");
+      console.log("✅ Pool México iniciado");
     }
   } catch (err) {
     console.log("❌ Error pool México:", err.message);
@@ -44,13 +47,15 @@ async function initPools() {
 
   try {
     if (!poolCanada) {
+      console.log("🔄 Intentando conectar a Canadá...");
       poolCanada = await oracledb.createPool({
         ...dbConfigCanada,
         poolMin: 1,
-        poolMax: 10,
-        poolIncrement: 1
+        poolMax: 5,
+        poolIncrement: 1,
+        poolTimeout: 60
       });
-      console.log("🇨🇦 Pool Canadá iniciado");
+      console.log("✅ Pool Canadá iniciado");
     }
   } catch (err) {
     console.log("❌ Error pool Canadá:", err.message);
@@ -58,28 +63,61 @@ async function initPools() {
 }
 
 // =============================
-// Obtener conexión automática
+// Obtener conexión automática con reintentos
 // =============================
-async function getConnection() {
+async function getConnection(retries = 3) {
   await initPools();
 
-  // 1️⃣ Intentar México primero
-  if (poolMexico) {
-    try {
-      const conn = await poolMexico.getConnection();
-      return { conn, region: "MEXICO" };
-    } catch {}
+  for (let i = 0; i < retries; i++) {
+    // Intentar México
+    if (poolMexico) {
+      try {
+        console.log(`🔌 Intentando conexión a México (intento ${i + 1}/${retries})`);
+        const conn = await poolMexico.getConnection();
+        console.log("✅ Conexión a México exitosa");
+        return { conn, region: "MEXICO" };
+      } catch (err) {
+        console.log(`⚠️ México intento ${i + 1} falló:`, err.message);
+        
+        // Si el pool está roto, recrearlo
+        if (err.message.includes('NJS-500') || err.message.includes('ECONNRESET')) {
+          console.log("🔄 Recreando pool México...");
+          try {
+            await poolMexico.close(0);
+          } catch {}
+          poolMexico = null;
+          await initPools();
+        }
+        
+        if (i < retries - 1) await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+
+    // Intentar Canadá
+    if (poolCanada) {
+      try {
+        console.log(`🔌 Intentando conexión a Canadá (intento ${i + 1}/${retries})`);
+        const conn = await poolCanada.getConnection();
+        console.log("✅ Conexión a Canadá exitosa");
+        return { conn, region: "CANADA" };
+      } catch (err) {
+        console.log(`⚠️ Canadá intento ${i + 1} falló:`, err.message);
+        
+        if (err.message.includes('NJS-500') || err.message.includes('ECONNRESET')) {
+          console.log("🔄 Recreando pool Canadá...");
+          try {
+            await poolCanada.close(0);
+          } catch {}
+          poolCanada = null;
+          await initPools();
+        }
+        
+        if (i < retries - 1) await new Promise(r => setTimeout(r, 1000));
+      }
+    }
   }
 
-  // 2️⃣ Intentar Canadá
-  if (poolCanada) {
-    try {
-      const conn = await poolCanada.getConnection();
-      return { conn, region: "CANADA" };
-    } catch {}
-  }
-
-  throw new Error("❌ Ninguna base de datos disponible");
+  throw new Error("❌ Ninguna base de datos disponible después de reintentos");
 }
 
 // =============================
@@ -95,10 +133,27 @@ async function replicar(query, binds, origen) {
     const conn = await poolDestino.getConnection();
     await conn.execute(query, binds, { autoCommit: true });
     await conn.close();
-    console.log(`🔁 Replicado en ${destino}`);
+    console.log(`🔄 Replicado en ${destino}`);
   } catch (err) {
-    console.log(`⚠ No replicado en ${destino}: ${err.message}`);
+    console.log(`⚠️ No replicado en ${destino}: ${err.message}`);
   }
+}
+
+// =============================
+// Helper para parsear body
+// =============================
+async function parseBody(req) {
+  return new Promise((resolve) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk.toString()));
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        resolve({});
+      }
+    });
+  });
 }
 
 // =============================
@@ -115,7 +170,7 @@ module.exports = async (req, res) => {
 
   try {
     // =======================
-    // ✔ STATUS
+    // ✅ STATUS
     // =======================
     if (path === "/status") {
       await initPools();
@@ -126,74 +181,107 @@ module.exports = async (req, res) => {
     }
 
     // =======================
-    // ✔ DASHBOARD
+    // ✅ DASHBOARD - CORREGIDO
     // =======================
     if (path === "/dashboard") {
+      console.log("📊 Petición al dashboard recibida");
       const { conn, region } = await getConnection();
+      console.log("🔌 Conexión obtenida desde:", region);
 
-      const stats = await conn.execute(
-        `SELECT 
-          (SELECT COUNT(*) FROM envios WHERE estatus IN ('PENDIENTE','EN_TRANSITO')) AS ENVIOS_ACTIVOS,
-          (SELECT COUNT(*) FROM clientes WHERE activo = 1) AS TOTAL_CLIENTES,
-          (SELECT COUNT(*) FROM almacenes WHERE activo = 1) AS TOTAL_ALMACENES,
-          (SELECT COUNT(*) FROM viajes WHERE estatus IN ('PROGRAMADO','EN_CURSO')) AS VIAJES_ACTIVOS
-        FROM dual`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT }
-      );
+      try {
+        console.log("⏳ Ejecutando query dashboard simplificada...");
+        
+        // Query corregida - usar FROM dual para subconsultas
+        const stats = await Promise.race([
+          conn.execute(
+            `SELECT 
+              (SELECT COUNT(*) FROM envios WHERE estatus IN ('PENDIENTE','EN_TRANSITO')) AS ENVIOS_ACTIVOS,
+              (SELECT COUNT(*) FROM clientes) AS TOTAL_CLIENTES,
+              (SELECT COUNT(*) FROM almacenes) AS TOTAL_ALMACENES,
+              (SELECT COUNT(*) FROM viajes) AS VIAJES_ACTIVOS
+            FROM dual`,
+            [],
+            { outFormat: oracledb.OUT_FORMAT_OBJECT }
+          ),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Query timeout (10s)')), 10000)
+          )
+        ]);
 
-      await conn.close();
-      return res.json({ data: stats.rows[0], region });
+        console.log("✅ Query completada:", stats.rows[0]);
+        await conn.close();
+
+        const data = stats.rows && stats.rows.length > 0 ? stats.rows[0] : {
+          ENVIOS_ACTIVOS: 0,
+          TOTAL_CLIENTES: 0,
+          TOTAL_ALMACENES: 0,
+          VIAJES_ACTIVOS: 0
+        };
+
+        return res.json({ data, region });
+      } catch (err) {
+        console.error("❌ Error en dashboard:", err.message);
+        await conn.close();
+        throw err;
+      }
     }
 
     // =======================
-    // ✔ GET /envios
+    // ✅ GET /envios
     // =======================
     if (path === "/envios" && req.method === "GET") {
+      console.log("📦 Petición a /envios");
       const { conn, region } = await getConnection();
 
-      const r = await conn.execute(
-        `SELECT e.id,
-                e.numero_guia,
-                c.nombre || ' ' || c.apellidos AS cliente,
-                ao.ciudad AS origen,
-                ad.ciudad AS destino,
-                e.estatus,
-                e.costo_envio
-         FROM envios e
-         JOIN clientes c ON e.cliente_id = c.id
-         JOIN almacenes ao ON ao.id = e.almacen_origen_id
-         JOIN almacenes ad ON ad.id = e.almacen_destino_id
-         ORDER BY e.fecha_creacion DESC`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT }
-      );
+      try {
+        const r = await Promise.race([
+          conn.execute(
+            `SELECT e.id,
+                    e.numero_guia,
+                    c.nombre || ' ' || c.apellidos AS cliente,
+                    ao.ciudad AS origen,
+                    ad.ciudad AS destino,
+                    e.estatus,
+                    e.costo_envio
+             FROM envios e
+             JOIN clientes c ON e.cliente_id = c.id
+             JOIN almacenes ao ON ao.id = e.almacen_origen_id
+             JOIN almacenes ad ON ad.id = e.almacen_destino_id
+             ORDER BY e.fecha_creacion DESC`,
+            [],
+            { outFormat: oracledb.OUT_FORMAT_OBJECT }
+          ),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Query timeout')), 10000)
+          )
+        ]);
 
-      await conn.close();
-      return res.json({ data: r.rows, region });
+        console.log("✅ Envíos obtenidos:", r.rows.length);
+        await conn.close();
+        return res.json({ data: r.rows || [], region });
+      } catch (err) {
+        console.error("❌ Error en /envios:", err.message);
+        await conn.close();
+        throw err;
+      }
     }
 
     // =======================
-    // ✔ POST /envios  (FALTABA)
+    // ✅ POST /envios
     // =======================
     if (path === "/envios" && req.method === "POST") {
-      const body = await new Promise((resolve) => {
-        let b = "";
-        req.on("data", (d) => (b += d.toString()));
-        req.on("end", () => resolve(JSON.parse(b || "{}")));
-      });
-
+      const body = await parseBody(req);
       const { conn, region } = await getConnection();
 
       const numeroGuia = "MX-" + Date.now().toString(36).toUpperCase();
 
       const query = `
         INSERT INTO envios 
-        (id, numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
+        (numero_guia, cliente_id, almacen_origen_id, almacen_destino_id,
          descripcion, peso_kg, costo_envio, destinatario_nombre,
-         destinatario_telefono, estatus)
-        VALUES (envios_seq.NEXTVAL, :guia, :cliente, :origen, :destino,
-                :descripcion, :peso, :costo, :destinatario, :telefono, 'PENDIENTE')
+         destinatario_telefono, estatus, fecha_creacion)
+        VALUES (:guia, :cliente, :origen, :destino,
+                :descripcion, :peso, :costo, :destinatario, :telefono, 'PENDIENTE', CURRENT_TIMESTAMP)
       `;
 
       const binds = {
@@ -201,95 +289,118 @@ module.exports = async (req, res) => {
         cliente: body.cliente_id,
         origen: body.almacen_origen_id,
         destino: body.almacen_destino_id,
-        descripcion: body.descripcion,
+        descripcion: body.descripcion || null,
         peso: body.peso_kg,
         costo: body.costo_envio,
         destinatario: body.destinatario_nombre,
-        telefono: body.destinatario_telefono
+        telefono: body.destinatario_telefono || null
       };
 
-      await conn.execute(query, binds, { autoCommit: true });
-      await conn.close();
+      try {
+        await conn.execute(query, binds, { autoCommit: true });
+        await conn.close();
 
-      // replicación
-      replicar(query, binds, region);
+        // Replicación
+        replicar(query, binds, region);
 
-      return res.json({ success: true, numeroGuia });
+        return res.json({ success: true, numeroGuia });
+      } catch (err) {
+        await conn.close();
+        throw err;
+      }
     }
 
     // =======================
-    // ✔ CLIENTES
+    // ✅ CLIENTES
     // =======================
     if (path === "/clientes") {
       const { conn, region } = await getConnection();
 
-      const r = await conn.execute(
-        `SELECT c.id, c.nombre, c.apellidos, c.email, c.telefono,
-                c.ciudad, c.pais, c.region,
-                COUNT(e.id) AS total_envios,
-                NVL(SUM(p.monto), 0) AS total_pagado
-         FROM clientes c
-         LEFT JOIN envios e ON e.cliente_id = c.id
-         LEFT JOIN pagos p ON p.envio_id = e.id
-         GROUP BY c.id, c.nombre, c.apellidos, c.email, c.telefono,
-                  c.ciudad, c.pais, c.region
-         ORDER BY c.id DESC`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT }
-      );
+      try {
+        const r = await conn.execute(
+          `SELECT c.id, c.nombre, c.apellidos, c.email, c.telefono,
+                  c.ciudad, c.pais, c.region,
+                  COUNT(e.id) AS total_envios,
+                  NVL(SUM(p.monto), 0) AS total_pagado
+           FROM clientes c
+           LEFT JOIN envios e ON e.cliente_id = c.id
+           LEFT JOIN pagos p ON p.envio_id = e.id
+           GROUP BY c.id, c.nombre, c.apellidos, c.email, c.telefono,
+                    c.ciudad, c.pais, c.region
+           ORDER BY c.id DESC`,
+          [],
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
 
-      await conn.close();
-      return res.json({ data: r.rows, region });
+        await conn.close();
+        return res.json({ data: r.rows || [], region });
+      } catch (err) {
+        await conn.close();
+        throw err;
+      }
     }
 
     // =======================
-    // ✔ ALMACENES
+    // ✅ ALMACENES - CORREGIDO
     // =======================
     if (path === "/almacenes") {
       const { conn, region } = await getConnection();
 
-      const r = await conn.execute(
-        `SELECT a.id, a.nombre, a.ciudad, a.estado, a.pais, a.region,
-                (SELECT COUNT(*) FROM envios WHERE almacen_origen_id = a.id AND estatus='PENDIENTE') AS pendientes,
-                (SELECT COUNT(*) FROM envios WHERE almacen_origen_id = a.id AND estatus='EN_TRANSITO') AS transito,
-                (SELECT COUNT(*) FROM envios WHERE almacen_origen_id = a.id AND estatus='ENTREGADO') AS entregados
-         FROM almacenes a
-         WHERE a.activo = 1
-         ORDER BY a.id DESC`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT }
-      );
+      try {
+        const r = await conn.execute(
+          `SELECT a.id, a.nombre, a.ciudad, a.estado, a.pais, a.region,
+                  (SELECT COUNT(*) FROM envios WHERE almacen_origen_id = a.id AND estatus='PENDIENTE') AS pendientes,
+                  (SELECT COUNT(*) FROM envios WHERE almacen_origen_id = a.id AND estatus='EN_TRANSITO') AS transito,
+                  (SELECT COUNT(*) FROM envios WHERE almacen_destino_id = a.id AND estatus='ENTREGADO') AS entregados
+           FROM almacenes a
+           WHERE a.activo = 1
+           ORDER BY a.id`,
+          [],
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
 
-      await conn.close();
-      return res.json({ data: r.rows, region });
+        await conn.close();
+        return res.json({ data: r.rows || [], region });
+      } catch (err) {
+        await conn.close();
+        throw err;
+      }
     }
 
     // =======================
-    // ✔ VIAJES
+    // ✅ VIAJES - CORREGIDO
     // =======================
     if (path === "/viajes") {
       const { conn, region } = await getConnection();
 
-      const r = await conn.execute(
-        `SELECT v.id, v.responsable_nombre, u.placa, r.nombre AS ruta,
-                v.estatus,
-                (SELECT COUNT(*) FROM envios WHERE viaje_id = v.id) AS paquetes
-         FROM viajes v
-         JOIN unidades u ON u.id = v.unidad_id
-         JOIN rutas r ON r.id = v.ruta_id
-         ORDER BY v.id DESC`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT }
-      );
+      try {
+        const r = await conn.execute(
+          `SELECT v.id, v.responsable_nombre, u.placa, r.nombre AS ruta,
+                  v.estatus,
+                  (SELECT COUNT(*) FROM envios WHERE viaje_id = v.id) AS paquetes
+           FROM viajes v
+           JOIN unidades u ON u.id = v.unidad_id
+           JOIN rutas r ON r.id = v.ruta_id
+           ORDER BY v.id DESC`,
+          [],
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
 
-      await conn.close();
-      return res.json({ data: r.rows, region });
+        await conn.close();
+        return res.json({ data: r.rows || [], region });
+      } catch (err) {
+        await conn.close();
+        throw err;
+      }
     }
 
     return res.status(404).json({ error: "Ruta no encontrada" });
 
   } catch (err) {
-    console.log("🔥 ERROR:", err);
-    return res.status(500).json({ error: err.message });
+    console.error("🔥 ERROR:", err);
+    return res.status(500).json({ 
+      error: err.message,
+      details: "Error conectando a base de datos"
+    });
   }
 };
