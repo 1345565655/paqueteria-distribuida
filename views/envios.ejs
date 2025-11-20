@@ -1,0 +1,51 @@
+<h1 class="mb-3">Registrar Envío</h1>
+
+<div class="card p-4 shadow-sm">
+  <form method="POST" action="/envios/nuevo">
+
+    <div class="mb-3">
+      <label class="form-label">Cliente</label>
+      <select class="form-control" name="cliente_id" required>
+        <option value="">Seleccione...</option>
+        <% clientes.forEach(c => { %>
+          <option value="<%= c.ID %>">
+            <%= c.NOMBRE %> <%= c.APELLIDOS %>
+          </option>
+        <% }) %>
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Almacén Origen</label>
+      <select class="form-control" name="almacen_origen" required>
+        <option value="">Seleccione...</option>
+        <% almacenes.forEach(a => { %>
+          <option value="<%= a.ID %>"><%= a.NOMBRE %></option>
+        <% }) %>
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Almacén Destino</label>
+      <select class="form-control" name="almacen_destino" required>
+        <option value="">Seleccione...</option>
+        <% almacenes.forEach(a => { %>
+          <option value="<%= a.ID %>"><%= a.NOMBRE %></option>
+        <% }) %>
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Peso KG</label>
+      <input name="peso" type="number" class="form-control" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Costo</label>
+      <input name="costo" type="number" class="form-control" required>
+    </div>
+
+    <button class="btn btn-success w-100">Guardar Envío</button>
+
+  </form>
+</div>

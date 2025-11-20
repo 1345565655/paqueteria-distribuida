@@ -1,0 +1,23 @@
+<h2>📋 Reporte de Clientes</h2>
+
+<table class="table table-bordered">
+  <thead>
+    <tr>
+      <th>Nombre</th>
+      <th>Apellidos</th>
+      <th>Email</th>
+      <th>Teléfono</th>
+    </tr>
+  </thead>
+
+  <tbody>
+  <% data.forEach(c => { %>
+    <tr>
+      <td><%= c.NOMBRE %></td>
+      <td><%= c.APELLIDOS %></td>
+      <td><%= c.EMAIL %></td>
+      <td><%= c.TELEFONO %></td>
+    </tr>
+  <% }); %>
+  </tbody>
+</table>

@@ -1,0 +1,23 @@
+<h2>🧭 Reporte de Rutas / Tracking</h2>
+
+<table class="table table-bordered">
+  <thead>
+    <tr>
+      <th>Guía</th>
+      <th>Estatus</th>
+      <th>Fecha Envío</th>
+      <th>Fecha Entrega</th>
+    </tr>
+  </thead>
+
+  <tbody>
+  <% data.forEach(r => { %>
+    <tr>
+      <td><%= r.NUMERO_GUIA %></td>
+      <td><%= r.ESTATUS %></td>
+      <td><%= r.FECHA_ENVIO %></td>
+      <td><%= r.FECHA_ENTREGA_REAL %></td>
+    </tr>
+  <% }); %>
+  </tbody>
+</table>

@@ -1,8 +1,0 @@
-[phases.setup]
-aptPkgs = ["libaio1t64", "wget", "unzip"]
-
-[phases.install]
-cmds = ["npm install"]
-
-[start]
-cmd = "node server.js"

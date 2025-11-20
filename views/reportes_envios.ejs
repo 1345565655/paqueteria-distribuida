@@ -1,0 +1,31 @@
+<h2>🚚 Reporte de Envíos</h2>
+
+<table class="table table-bordered">
+  <thead>
+    <tr>
+      <th>Guía</th>
+      <th>Cliente</th>
+      <th>Origen</th>
+      <th>Destino</th>
+      <th>Peso (kg)</th>
+      <th>Costo</th>
+      <th>Estatus</th>
+      <th>Fecha</th>
+    </tr>
+  </thead>
+
+  <tbody>
+  <% data.forEach(e => { %>
+    <tr>
+      <td><%= e.NUMERO_GUIA %></td>
+      <td><%= e.CLIENTE_ID %></td>
+      <td><%= e.ALMACEN_ORIGEN_ID %></td>
+      <td><%= e.ALMACEN_DESTINO_ID %></td>
+      <td><%= e.PESO_KG %></td>
+      <td>$<%= e.COSTO_ENVIO %></td>
+      <td><%= e.ESTATUS %></td>
+      <td><%= e.FECHA_CREACION %></td>
+    </tr>
+  <% }); %>
+  </tbody>
+</table>
